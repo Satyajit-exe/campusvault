@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Mail, Lock, ArrowRight, ShieldCheck, UserCheck } from 'lucide-react';
+import { Mail, Lock, ArrowRight } from 'lucide-react';
 import CampusVaultLogo from '../components/common/CampusVaultLogo';
 import { useAuth } from '../context/AuthContext';
 
@@ -41,16 +41,6 @@ export default function LoginPage() {
     }
   };
 
-  const handleDemoStudent = () => {
-    setEmail('rahul.kumar@cgu-odisha.ac.in');
-    setPassword('Student@12345');
-  };
-
-  const handleDemoAdmin = () => {
-    setEmail('admin@campusvault.edu');
-    setPassword('Admin@12345');
-  };
-
   return (
     <div className="flex min-h-[calc(100vh-8rem)] items-center justify-center px-4 py-12 sm:px-6 lg:px-8">
       <div className="w-full max-w-md space-y-6">
@@ -62,29 +52,6 @@ export default function LoginPage() {
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
             Sign in to access your college syllabus, verified PYQs, and notes.
           </p>
-        </div>
-
-        {/* Demo Login Shortcuts */}
-        <div className="rounded-2xl border border-brand-200 bg-brand-50/50 p-3.5 text-xs dark:border-brand-900/50 dark:bg-brand-950/40">
-          <p className="font-bold text-brand-800 dark:text-brand-300 mb-2">⚡ Quick 1-Click Demo Logins:</p>
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={handleDemoStudent}
-              className="flex items-center justify-center gap-1.5 rounded-lg bg-white p-2 font-semibold text-slate-700 shadow-sm hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800"
-            >
-              <UserCheck className="h-3.5 w-3.5 text-brand-600" />
-              <span>Student (Rahul)</span>
-            </button>
-            <button
-              type="button"
-              onClick={handleDemoAdmin}
-              className="flex items-center justify-center gap-1.5 rounded-lg bg-white p-2 font-semibold text-slate-700 shadow-sm hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800"
-            >
-              <ShieldCheck className="h-3.5 w-3.5 text-indigo-600" />
-              <span>Admin (Portal)</span>
-            </button>
-          </div>
         </div>
 
         {/* Form Card */}
@@ -107,7 +74,7 @@ export default function LoginPage() {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="rahul.kumar@cgu-odisha.ac.in"
+                  placeholder="student@college.edu"
                   className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 py-2.5 text-xs text-slate-900 focus:border-brand-500 focus:outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-white"
                 />
               </div>

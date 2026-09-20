@@ -255,21 +255,41 @@ export default function SecurePdfViewer({ resource }) {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleBack = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    }
+
+    const fallbackUrl = resource?.subject?.slug
+      ? `/subjects/${resource.subject.slug}`
+      : resource?.subject?._id
+      ? `/subjects/${resource.subject._id}`
+      : '/dashboard';
+
+    // If there is active in-app history, go back; otherwise go directly to the subject/dashboard
+    if (window.history.state && typeof window.history.state.idx === 'number' && window.history.state.idx > 0) {
+      navigate(-1);
+    } else {
+      navigate(fallbackUrl);
+    }
+  };
+
   return (
     <div
       ref={containerRef}
       onContextMenu={handleContextMenu}
-      className="flex h-[calc(100vh-4rem)] flex-col bg-slate-900 text-slate-100 select-none overflow-hidden"
+      className="flex h-screen flex-col bg-slate-900 text-slate-100 select-none overflow-hidden"
     >
       {/* Top Controls Bar */}
-      <div className="flex h-14 items-center justify-between border-b border-slate-800 bg-slate-950 px-4">
+      <div className="flex h-14 items-center justify-between border-b border-slate-800 bg-slate-950 px-4 relative z-20">
         {/* Left: Back button + Resource Title */}
         <div className="flex items-center gap-3 overflow-hidden">
           <button
             type="button"
-            onClick={() => navigate(-1)}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition-colors flex-shrink-0"
+            onClick={handleBack}
+            className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white transition-all flex-shrink-0 cursor-pointer active:scale-95"
             title="Go back"
+            aria-label="Go back"
           >
             <ArrowLeft className="h-5 w-5" />
           </button>
@@ -278,8 +298,18 @@ export default function SecurePdfViewer({ resource }) {
             <h2 className="text-xs sm:text-sm font-bold text-white truncate max-w-[200px] sm:max-w-md">
               {resource?.title}
             </h2>
-            <p className="text-[10px] text-slate-400 truncate">
-              {resource?.subject?.name} • {resource?.materialType} {resource?.examYear ? `(${resource.examYear})` : ''}
+            <p className="text-[10px] text-slate-400 truncate flex items-center gap-1">
+              {resource?.subject ? (
+                <button
+                  type="button"
+                  onClick={() => navigate(resource?.subject?.slug ? `/subjects/${resource.subject.slug}` : '/dashboard')}
+                  className="hover:text-brand-400 hover:underline transition-colors text-left truncate"
+                >
+                  {resource?.subject?.name}
+                </button>
+              ) : null}
+              {resource?.subject ? <span>•</span> : null}
+              <span>{resource?.materialType} {resource?.examYear ? `(${resource.examYear})` : ''}</span>
             </p>
           </div>
         </div>
