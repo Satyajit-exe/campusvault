@@ -127,10 +127,12 @@ router.post(
         examType: examType || 'None',
         examYear: examYear ? Number(examYear) : new Date().getFullYear(),
         topicsCovered: parsedTopics,
-        source: source || 'Student Contribution',
-        sourceType: sourceType || 'Student-created',
-        permissionStatus: 'Pending',
-        status: 'pending', // ALWAYS pending review for student uploads!
+        source: source || (user.role === 'ADMIN' ? 'Faculty / Admin Verified' : 'Student Contribution'),
+        sourceType: sourceType || (user.role === 'ADMIN' ? 'Official' : 'Student-created'),
+        permissionStatus: user.role === 'ADMIN' ? 'Official' : 'Pending',
+        status: user.role === 'ADMIN' ? 'approved' : 'pending',
+        approvedBy: user.role === 'ADMIN' ? user._id : undefined,
+        approvedAt: user.role === 'ADMIN' ? new Date() : undefined,
         uploadedBy: user._id,
       });
 
@@ -143,7 +145,10 @@ router.post(
 
       res.status(201).json({
         success: true,
-        message: 'Resource submitted successfully! Our moderators will review it shortly.',
+        message:
+          user.role === 'ADMIN'
+            ? 'Resource uploaded and published directly to repository!'
+            : 'Resource submitted successfully! Our moderators will review it shortly.',
         resource: {
           _id: newResource._id,
           title: newResource.title,

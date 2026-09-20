@@ -48,6 +48,9 @@ class CloudinaryStorageProvider {
           public_id: fullFileName,
           use_filename: false,
           unique_filename: false,
+          access_mode: 'public',
+          overwrite: true,
+          invalidate: true,
         },
         (error, result) => {
           if (error) return reject(error);
@@ -121,7 +124,14 @@ class CloudinaryStorageProvider {
     });
 
     if (!response.ok) {
-      // If direct URL gave 404 and Cloudinary is configured, try generating a signed URL
+      if (response.status === 401) {
+        console.warn(
+          `[Storage] Cloudinary blocked PDF stream with 401 ("deny or ACL failure").\n` +
+          `[Action Required]: In your Cloudinary Console (https://console.cloudinary.com), open Settings -> Security, and check the box "Allow delivery of PDF and ZIP files".`
+        );
+      }
+
+      // If direct URL gave error and Cloudinary is configured, try generating a signed URL
       if (this.isConfigured) {
         try {
           const signedUrl = cloudinary.url(`campusvault_documents/${safeKey}`, {
