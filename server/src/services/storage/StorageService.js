@@ -2,9 +2,100 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import stream from 'stream';
+import https from 'https';
+import http from 'http';
 import mongoose from 'mongoose';
 import PDFDocument from 'pdfkit';
+import { v2 as cloudinary } from 'cloudinary';
 import { env } from '../../config/env.js';
+
+// Configure Cloudinary if credentials provided
+if (env.cloudinaryCloudName && env.cloudinaryApiKey && env.cloudinaryApiSecret) {
+  cloudinary.config({
+    cloud_name: env.cloudinaryCloudName,
+    api_key: env.cloudinaryApiKey,
+    api_secret: env.cloudinaryApiSecret,
+    secure: true,
+  });
+}
+
+class CloudinaryStorageProvider {
+  constructor() {
+    this.isConfigured = Boolean(env.cloudinaryCloudName && env.cloudinaryApiKey && env.cloudinaryApiSecret);
+  }
+
+  async uploadFile({ buffer, originalname, mimeType }) {
+    if (!this.isConfigured) {
+      throw new Error('Cloudinary credentials not configured in environment variables.');
+    }
+
+    const fileExt = path.extname(originalname).toLowerCase() || '.pdf';
+    const publicId = `${crypto.randomBytes(16).toString('hex')}_${Date.now()}`;
+    const fullFileName = `${publicId}${fileExt}`;
+
+    const uploadResult = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          resource_type: 'raw', // Preserves full multi-page PDF documents and formatting
+          folder: 'campusvault_documents',
+          public_id: fullFileName,
+        },
+        (error, result) => {
+          if (error) return reject(error);
+          resolve(result);
+        }
+      );
+
+      const bufferStream = new stream.PassThrough();
+      bufferStream.end(buffer);
+      bufferStream.pipe(uploadStream);
+    });
+
+    console.log(`[Storage] Uploaded document to Cloudinary: ${uploadResult.secure_url}`);
+
+    return {
+      fileKey: fullFileName,
+      storageProvider: 'cloudinary',
+      fileSize: uploadResult.bytes || buffer.length,
+      mimeType: mimeType || 'application/pdf',
+      cloudUrl: uploadResult.secure_url,
+    };
+  }
+
+  async getFileStream(fileKey) {
+    const safeKey = path.basename(fileKey);
+    // Construct or retrieve Cloudinary raw URL
+    const cloudName = env.cloudinaryCloudName;
+    const fileUrl = `https://res.cloudinary.com/${cloudName}/raw/upload/campusvault_documents/${safeKey}`;
+
+    return new Promise((resolve, reject) => {
+      https.get(fileUrl, (res) => {
+        if (res.statusCode >= 400) {
+          return reject(new Error(`Cloudinary file fetch returned status ${res.statusCode}`));
+        }
+        resolve({
+          stream: res,
+          size: Number(res.headers['content-length']) || 0,
+          mimeType: res.headers['content-type'] || 'application/pdf',
+        });
+      }).on('error', reject);
+    });
+  }
+
+  async deleteFile(fileKey) {
+    if (!this.isConfigured) return true;
+    try {
+      const safeKey = path.basename(fileKey);
+      await cloudinary.uploader.destroy(`campusvault_documents/${safeKey}`, {
+        resource_type: 'raw',
+      });
+      return true;
+    } catch (err) {
+      console.warn('[Storage] Cloudinary delete warning:', err.message);
+      return false;
+    }
+  }
+}
 
 class GridFSStorageProvider {
   getBucket() {
@@ -45,7 +136,7 @@ class GridFSStorageProvider {
           .on('finish', resolve)
           .on('error', reject);
       });
-      console.log(`[Storage] Uploaded ${fileKey} directly to MongoDB Atlas GridFS.`);
+      console.log(`[Storage] Uploaded ${fileKey} to MongoDB Atlas GridFS.`);
     }
 
     return {
@@ -60,7 +151,7 @@ class GridFSStorageProvider {
     const safeKey = path.basename(fileKey);
     const bucket = this.getBucket();
 
-    // 1. Check MongoDB Atlas GridFS (persistent cloud database)
+    // 1. Check MongoDB Atlas GridFS
     if (bucket) {
       try {
         const files = await bucket.find({ filename: safeKey }).toArray();
@@ -175,30 +266,46 @@ class GridFSStorageProvider {
 class StorageService {
   constructor() {
     this.gridfsProvider = new GridFSStorageProvider();
+    this.cloudinaryProvider = new CloudinaryStorageProvider();
     this.providers = {
       gridfs: this.gridfsProvider,
-      local: this.gridfsProvider, // GridFS is primary so files permanently stay in MongoDB Atlas!
+      local: this.gridfsProvider,
+      cloudinary: this.cloudinaryProvider,
     };
-    this.activeProviderName = 'gridfs';
   }
 
-  getProvider(providerName) {
-    const provider = this.providers[providerName || this.activeProviderName];
-    return provider || this.gridfsProvider;
+  getActiveProvider() {
+    // If Cloudinary credentials exist and provider is set to cloudinary
+    if (env.storageProvider === 'cloudinary' && this.cloudinaryProvider.isConfigured) {
+      return this.cloudinaryProvider;
+    }
+    return this.gridfsProvider;
   }
 
   async uploadFile(fileData) {
-    return this.gridfsProvider.uploadFile(fileData);
+    const provider = this.getActiveProvider();
+    return provider.uploadFile(fileData);
   }
 
-  async getFileStream(fileKey, providerName = 'gridfs') {
-    const provider = this.getProvider(providerName);
-    return provider.getFileStream(fileKey);
+  async getFileStream(fileKey, providerName) {
+    // If resource specifies cloudinary or active provider is cloudinary, try cloudinary first
+    if (providerName === 'cloudinary' || (env.storageProvider === 'cloudinary' && this.cloudinaryProvider.isConfigured)) {
+      try {
+        return await this.cloudinaryProvider.getFileStream(fileKey);
+      } catch (cloudErr) {
+        console.warn('[Storage] Cloudinary stream fallback to GridFS:', cloudErr.message);
+      }
+    }
+
+    // Default to GridFS / local disk
+    return this.gridfsProvider.getFileStream(fileKey);
   }
 
-  async deleteFile(fileKey, providerName = 'gridfs') {
-    const provider = this.getProvider(providerName);
-    return provider.deleteFile(fileKey);
+  async deleteFile(fileKey, providerName) {
+    if (providerName === 'cloudinary') {
+      return this.cloudinaryProvider.deleteFile(fileKey);
+    }
+    return this.gridfsProvider.deleteFile(fileKey);
   }
 
   async syncLocalUploadsToGridFS() {
