@@ -1,0 +1,17 @@
+{
+  "name": "campusvault",
+  "version": "1.0.0",
+  "description": "CampusVault - Your College. Everything You Need. One Search.",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm.cmd --prefix server run dev\" \"npm.cmd --prefix client run dev\"",
+    "dev:server": "npm.cmd --prefix server run dev",
+    "dev:client": "npm.cmd --prefix client run dev",
+    "start": "node server/src/server.js",
+    "build": "npm --prefix client install && npm --prefix client run build && npm --prefix server install",
+    "seed": "node server/src/seeds/seedData.js"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
