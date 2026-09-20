@@ -9,22 +9,27 @@ const router = express.Router();
 // Helper to get maintenance mode state
 export async function getMaintenanceState() {
   try {
+    // 1. Render Environment Variable has top priority
+    if (process.env.MAINTENANCE_MODE === 'true') {
+      return {
+        enabled: true,
+        message: 'CampusVault is currently undergoing scheduled platform maintenance and cloud upgrades.',
+        estimatedTime: 'Within 15–30 minutes',
+      };
+    }
+    if (process.env.MAINTENANCE_MODE === 'false') {
+      return { enabled: false };
+    }
+
+    // 2. Otherwise check dynamic setting from Admin Dashboard
     const setting = await SystemSetting.findOne({ key: 'maintenance_mode' });
-    if (setting && typeof setting.value === 'object') {
+    if (setting && typeof setting.value === 'object' && setting.value.enabled === true) {
       return setting.value;
     }
-    // Fallback to env variable
-    return {
-      enabled: env.maintenanceMode || false,
-      message: 'CampusVault is currently undergoing scheduled platform maintenance and cloud upgrades.',
-      estimatedTime: 'Estimated completion: within 15–30 minutes',
-    };
+
+    return { enabled: false };
   } catch (err) {
-    return {
-      enabled: env.maintenanceMode || false,
-      message: 'Platform maintenance in progress.',
-      estimatedTime: 'Soon',
-    };
+    return { enabled: false };
   }
 }
 
@@ -39,6 +44,16 @@ router.get('/status', async (req, res) => {
     estimatedTime: maintenance.estimatedTime || 'Shortly',
     timestamp: new Date().toISOString(),
   });
+});
+
+// GET /api/system/off - Quick route to turn off maintenance mode
+router.get('/off', async (req, res) => {
+  await SystemSetting.findOneAndUpdate(
+    { key: 'maintenance_mode' },
+    { value: { enabled: false } },
+    { upsert: true }
+  );
+  res.json({ success: true, maintenance: false, message: 'Maintenance mode disabled successfully!' });
 });
 
 // POST /api/system/maintenance - Admin toggle maintenance mode

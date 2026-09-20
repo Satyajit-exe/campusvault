@@ -5,9 +5,27 @@ import { AcademicYear } from '../models/AcademicYear.js';
 import { Semester } from '../models/Semester.js';
 import { Subject } from '../models/Subject.js';
 import { User } from '../models/User.js';
+import { SystemSetting } from '../models/SystemSetting.js';
 
 export async function autoSeedIfEmpty() {
   try {
+    // 1. Reset maintenance mode to OFF on server boot unless explicitly enabled via env
+    if (process.env.MAINTENANCE_MODE !== 'true') {
+      await SystemSetting.findOneAndUpdate(
+        { key: 'maintenance_mode' },
+        { value: { enabled: false } },
+        { upsert: true }
+      );
+    }
+
+    // 2. Ensure admin account is active
+    const adminUser = await User.findOne({ email: 'admin@campusvault.edu' });
+    if (adminUser) {
+      adminUser.isActive = true;
+      adminUser.role = 'ADMIN';
+      await adminUser.save();
+    }
+
     const collegeCount = await College.countDocuments();
     if (collegeCount > 0) {
       return;
