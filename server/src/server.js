@@ -26,6 +26,7 @@ import contributionRoutes from './routes/contributionRoutes.js';
 import copyrightRoutes from './routes/copyrightRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import { autoSeedIfEmpty } from './seeds/autoSeed.js';
+import { storageService } from './services/storage/StorageService.js';
 
 const app = express();
 
@@ -103,6 +104,7 @@ app.use(errorHandler);
 async function startServer() {
   await connectDB();
   await autoSeedIfEmpty();
+  await storageService.syncLocalUploadsToGridFS();
   app.listen(env.port, () => {
     console.log(`
 ==================================================

@@ -1,41 +1,136 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import stream from 'stream';
+import mongoose from 'mongoose';
 import PDFDocument from 'pdfkit';
 import { env } from '../../config/env.js';
 
-class LocalStorageProvider {
-  constructor() {
-    this.uploadDir = path.join(env.uploadDir, 'documents');
-    if (!fs.existsSync(this.uploadDir)) {
-      fs.mkdirSync(this.uploadDir, { recursive: true });
+class GridFSStorageProvider {
+  getBucket() {
+    if (mongoose.connection && mongoose.connection.readyState === 1 && mongoose.connection.db) {
+      return new mongoose.mongo.GridFSBucket(mongoose.connection.db, {
+        bucketName: 'documents',
+      });
     }
+    return null;
   }
 
   async uploadFile({ buffer, originalname, mimeType }) {
     const fileExt = path.extname(originalname).toLowerCase() || '.pdf';
-    // Generate an opaque, non-guessable random key
     const fileKey = `${crypto.randomBytes(16).toString('hex')}_${Date.now()}${fileExt}`;
-    const destination = path.join(this.uploadDir, fileKey);
+    const bucket = this.getBucket();
 
-    await fs.promises.writeFile(destination, buffer);
+    // Cache locally if filesystem permits
+    try {
+      const localDir = path.join(env.uploadDir, 'documents');
+      if (!fs.existsSync(localDir)) {
+        fs.mkdirSync(localDir, { recursive: true });
+      }
+      await fs.promises.writeFile(path.join(localDir, fileKey), buffer);
+    } catch (diskErr) {
+      console.warn('[Storage] Local cache write warning:', diskErr.message);
+    }
+
+    if (bucket) {
+      await new Promise((resolve, reject) => {
+        const uploadStream = bucket.openUploadStream(fileKey, {
+          contentType: mimeType || 'application/pdf',
+          metadata: { originalname },
+        });
+        const bufferStream = new stream.PassThrough();
+        bufferStream.end(buffer);
+        bufferStream
+          .pipe(uploadStream)
+          .on('finish', resolve)
+          .on('error', reject);
+      });
+      console.log(`[Storage] Uploaded ${fileKey} directly to MongoDB Atlas GridFS.`);
+    }
 
     return {
       fileKey,
-      storageProvider: 'local',
+      storageProvider: 'gridfs',
       fileSize: buffer.length,
-      mimeType,
+      mimeType: mimeType || 'application/pdf',
     };
   }
 
-  generateFallbackPdf(filePath, safeKey) {
+  async getFileStream(fileKey) {
+    const safeKey = path.basename(fileKey);
+    const bucket = this.getBucket();
+
+    // 1. Check MongoDB Atlas GridFS (persistent cloud database)
+    if (bucket) {
+      try {
+        const files = await bucket.find({ filename: safeKey }).toArray();
+        if (files.length > 0) {
+          const fileDoc = files[0];
+          const downloadStream = bucket.openDownloadStream(fileDoc._id);
+          return {
+            stream: downloadStream,
+            size: fileDoc.length,
+            mimeType: fileDoc.contentType || 'application/pdf',
+          };
+        }
+      } catch (gridErr) {
+        console.warn('[Storage] GridFS read warning:', gridErr.message);
+      }
+    }
+
+    // 2. Check local disk (for repo files / local cache)
+    const localDir = path.join(env.uploadDir, 'documents');
+    const localPath = path.join(localDir, safeKey);
+    if (fs.existsSync(localPath)) {
+      const stat = await fs.promises.stat(localPath);
+      // Automatically replicate to GridFS in the background so it's backed up to MongoDB Atlas
+      if (bucket) {
+        fs.promises.readFile(localPath).then((fileBuf) => {
+          const up = bucket.openUploadStream(safeKey, { contentType: 'application/pdf' });
+          const pt = new stream.PassThrough();
+          pt.end(fileBuf);
+          pt.pipe(up).on('finish', () => {
+            console.log(`[Storage] Auto-replicated ${safeKey} to MongoDB Atlas GridFS.`);
+          });
+        }).catch(() => {});
+      }
+      const readStream = fs.createReadStream(localPath);
+      return { stream: readStream, size: stat.size, mimeType: 'application/pdf' };
+    }
+
+    // 3. Fallback: generate academic reference PDF
+    return this.generateFallbackPdf(safeKey);
+  }
+
+  async deleteFile(fileKey) {
+    const safeKey = path.basename(fileKey);
+    const bucket = this.getBucket();
+    if (bucket) {
+      try {
+        const files = await bucket.find({ filename: safeKey }).toArray();
+        for (const f of files) {
+          await bucket.delete(f._id).catch(() => {});
+        }
+      } catch (delErr) {
+        console.warn('[Storage] GridFS delete warning:', delErr.message);
+      }
+    }
+    const localDir = path.join(env.uploadDir, 'documents');
+    const localPath = path.join(localDir, safeKey);
+    if (fs.existsSync(localPath)) {
+      await fs.promises.unlink(localPath).catch(() => {});
+    }
+    return true;
+  }
+
+  generateFallbackPdf(safeKey) {
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({ margin: 50, size: 'A4' });
-        const writeStream = fs.createWriteStream(filePath);
-        doc.pipe(writeStream);
+        const pt = new stream.PassThrough();
+        doc.pipe(pt);
 
-        // Header
+        // Header Banner
         doc.rect(50, 40, 495, 60).fill('#4F46E5');
         doc.fontSize(16).fillColor('#FFFFFF').font('Helvetica-Bold').text('CAMPUSVAULT ACADEMIC ARCHIVE', 65, 55);
         doc.fontSize(10).fillColor('#E0E7FF').font('Helvetica').text('Verified Academic Document Stream', 65, 76);
@@ -57,126 +152,82 @@ class LocalStorageProvider {
         });
 
         doc.end();
-        writeStream.on('finish', resolve);
-        writeStream.on('error', reject);
+
+        const chunks = [];
+        pt.on('data', (chunk) => chunks.push(chunk));
+        pt.on('end', () => {
+          const finalBuf = Buffer.concat(chunks);
+          const readable = new stream.PassThrough();
+          readable.end(finalBuf);
+          resolve({
+            stream: readable,
+            size: finalBuf.length,
+            mimeType: 'application/pdf',
+          });
+        });
       } catch (err) {
         reject(err);
       }
     });
   }
-
-  async getFileStream(fileKey) {
-    // Sanitize fileKey to prevent path traversal
-    const safeKey = path.basename(fileKey);
-    const filePath = path.join(this.uploadDir, safeKey);
-
-    if (!fs.existsSync(filePath)) {
-      console.warn(`[Storage] Resource file not found on disk: ${safeKey}. Generating fallback academic PDF...`);
-      await this.generateFallbackPdf(filePath, safeKey);
-    }
-
-    const stat = await fs.promises.stat(filePath);
-    const stream = fs.createReadStream(filePath);
-    return { stream, size: stat.size, mimeType: 'application/pdf' };
-  }
-
-  async deleteFile(fileKey) {
-    const safeKey = path.basename(fileKey);
-    const filePath = path.join(this.uploadDir, safeKey);
-    if (fs.existsSync(filePath)) {
-      await fs.promises.unlink(filePath);
-    }
-    return true;
-  }
-}
-
-class S3StorageProvider {
-  constructor() {
-    this.bucket = process.env.S3_BUCKET || 'campusvault-resources';
-    this.region = process.env.S3_REGION || 'us-east-1';
-    this.endpoint = process.env.S3_ENDPOINT || null; // supports Cloudflare R2 & MinIO
-  }
-
-  async uploadFile({ buffer, originalname, mimeType }) {
-    const fileExt = path.extname(originalname).toLowerCase() || '.pdf';
-    const fileKey = `docs/${crypto.randomBytes(16).toString('hex')}_${Date.now()}${fileExt}`;
-    // In production with AWS/R2 credentials configured, this executes PutObjectCommand
-    console.log(`[S3 Storage] Uploading to bucket ${this.bucket}: ${fileKey}`);
-    return {
-      fileKey,
-      storageProvider: 's3',
-      fileSize: buffer.length,
-      mimeType,
-    };
-  }
-
-  async getFileStream(fileKey) {
-    console.log(`[S3 Storage] Streaming file ${fileKey} from bucket ${this.bucket}`);
-    throw new Error('S3 Storage credentials not configured for this environment');
-  }
-
-  async deleteFile(fileKey) {
-    console.log(`[S3 Storage] Deleting file ${fileKey}`);
-    return true;
-  }
-}
-
-class CloudinaryStorageProvider {
-  constructor() {
-    this.cloudName = process.env.CLOUDINARY_CLOUD_NAME || '';
-  }
-
-  async uploadFile({ buffer, originalname, mimeType }) {
-    const fileKey = `cloudinary_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
-    return {
-      fileKey,
-      storageProvider: 'cloudinary',
-      fileSize: buffer.length,
-      mimeType,
-    };
-  }
-
-  async getFileStream(fileKey) {
-    throw new Error('Cloudinary credentials not configured for this environment');
-  }
-
-  async deleteFile(fileKey) {
-    return true;
-  }
 }
 
 class StorageService {
   constructor() {
+    this.gridfsProvider = new GridFSStorageProvider();
     this.providers = {
-      local: new LocalStorageProvider(),
-      s3: new S3StorageProvider(),
-      r2: new S3StorageProvider(),
-      cloudinary: new CloudinaryStorageProvider(),
+      gridfs: this.gridfsProvider,
+      local: this.gridfsProvider, // GridFS is primary so files permanently stay in MongoDB Atlas!
     };
-    this.activeProviderName = env.storageProvider || 'local';
+    this.activeProviderName = 'gridfs';
   }
 
   getProvider(providerName) {
     const provider = this.providers[providerName || this.activeProviderName];
-    if (!provider) {
-      return this.providers.local;
-    }
-    return provider;
+    return provider || this.gridfsProvider;
   }
 
   async uploadFile(fileData) {
-    const provider = this.getProvider(this.activeProviderName);
-    return provider.uploadFile(fileData);
+    return this.gridfsProvider.uploadFile(fileData);
   }
 
-  async getFileStream(fileKey, providerName = 'local') {
+  async getFileStream(fileKey, providerName = 'gridfs') {
     const provider = this.getProvider(providerName);
     return provider.getFileStream(fileKey);
   }
 
-  async deleteFile(fileKey, providerName = 'local') {
+  async deleteFile(fileKey, providerName = 'gridfs') {
     const provider = this.getProvider(providerName);
     return provider.deleteFile(fileKey);
+  }
+
+  async syncLocalUploadsToGridFS() {
+    const bucket = this.gridfsProvider.getBucket();
+    if (!bucket) return;
+
+    const localDir = path.join(env.uploadDir, 'documents');
+    if (!fs.existsSync(localDir)) return;
+
+    try {
+      const files = await fs.promises.readdir(localDir);
+      for (const file of files) {
+        if (!file.endsWith('.pdf')) continue;
+        const existing = await bucket.find({ filename: file }).toArray();
+        if (existing.length === 0) {
+          const filePath = path.join(localDir, file);
+          const fileBuf = await fs.promises.readFile(filePath);
+          await new Promise((res, rej) => {
+            const up = bucket.openUploadStream(file, { contentType: 'application/pdf' });
+            const pt = new stream.PassThrough();
+            pt.end(fileBuf);
+            pt.pipe(up).on('finish', res).on('error', rej);
+          });
+          console.log(`[Storage] Synced ${file} into MongoDB Atlas GridFS.`);
+        }
+      }
+    } catch (err) {
+      console.warn('[Storage] Sync to GridFS warning:', err.message);
+    }
   }
 }
 
