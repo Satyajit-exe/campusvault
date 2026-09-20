@@ -34,20 +34,22 @@ export default function SecurePdfViewer({ resource }) {
   const canvasRef = useRef(null);
   const blobUrlRef = useRef(null);
 
+  const DEFAULT_SCALE = 0.8; // 80% default zoom
+
   const getAutoFitScale = (unscaledWidth) => {
-    if (!unscaledWidth) return typeof window !== 'undefined' && window.innerWidth < 640 ? 0.6 : 1.2;
+    if (!unscaledWidth) return DEFAULT_SCALE;
     const screenWidth = containerRef.current?.clientWidth || window.innerWidth || 390;
     // Mobile (<640px) uses minimal padding (16px total) so PDF fills phone screen width
     const padding = screenWidth < 640 ? 16 : 48;
     const availableWidth = Math.max(screenWidth - padding, 260);
     const fitScale = Number((availableWidth / unscaledWidth).toFixed(2));
-    return screenWidth < 640 ? fitScale : Math.min(fitScale, 1.3);
+    return screenWidth < 640 ? Math.min(fitScale, DEFAULT_SCALE) : DEFAULT_SCALE;
   };
 
   const [pdfDoc, setPdfDoc] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const [scale, setScale] = useState(() => (typeof window !== 'undefined' && window.innerWidth < 640 ? 0.6 : 1.2));
+  const [scale, setScale] = useState(DEFAULT_SCALE);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [studiedStatus, setStudiedStatus] = useState('Not Started');
@@ -183,33 +185,31 @@ export default function SecurePdfViewer({ resource }) {
     };
   }, [pdfDoc, currentPage, scale, viewerMode]);
 
-  // Automatically calculate responsive fit-to-screen scale when pdfDoc loads or on resize
+  // Apply 80% default zoom (or responsive fit for narrow phone screens)
   useEffect(() => {
     if (!pdfDoc) return;
     let active = true;
 
-    async function autoFitDocument() {
+    async function applyDefaultScale() {
       try {
-        const page = await pdfDoc.getPage(currentPage || 1);
-        if (!active) return;
-        const unscaledViewport = page.getViewport({ scale: 1.0 });
-        const fitScale = getAutoFitScale(unscaledViewport.width);
-        setScale(fitScale);
+        if (typeof window !== 'undefined' && window.innerWidth < 640) {
+          const page = await pdfDoc.getPage(currentPage || 1);
+          if (!active) return;
+          const unscaledViewport = page.getViewport({ scale: 1.0 });
+          const fitScale = getAutoFitScale(unscaledViewport.width);
+          setScale(fitScale);
+        } else {
+          setScale(DEFAULT_SCALE);
+        }
       } catch (err) {
-        console.warn('Failed to calculate fit scale:', err);
+        setScale(DEFAULT_SCALE);
       }
     }
 
-    autoFitDocument();
+    applyDefaultScale();
 
-    const handleResize = () => {
-      autoFitDocument();
-    };
-
-    window.addEventListener('resize', handleResize);
     return () => {
       active = false;
-      window.removeEventListener('resize', handleResize);
     };
   }, [pdfDoc]);
 
@@ -232,16 +232,7 @@ export default function SecurePdfViewer({ resource }) {
 
   const handleZoomIn = () => setScale((prev) => Math.min(Number((prev + 0.15).toFixed(2)), 2.5));
   const handleZoomOut = () => setScale((prev) => Math.max(Number((prev - 0.15).toFixed(2)), 0.35));
-  const handleResetZoom = async () => {
-    if (!pdfDoc) return;
-    try {
-      const page = await pdfDoc.getPage(currentPage);
-      const unscaled = page.getViewport({ scale: 1.0 });
-      setScale(getAutoFitScale(unscaled.width));
-    } catch {
-      setScale(window.innerWidth < 640 ? 0.6 : 1.2);
-    }
-  };
+  const handleResetZoom = () => setScale(DEFAULT_SCALE);
 
   const handlePrevPage = () => setCurrentPage((p) => Math.max(p - 1, 1));
   const handleNextPage = () => setCurrentPage((p) => Math.min(p + 1, totalPages));
@@ -595,9 +586,9 @@ export default function SecurePdfViewer({ resource }) {
               type="button"
               onClick={handleResetZoom}
               className="px-1.5 text-[10px] font-mono text-brand-400 hover:text-brand-300 font-bold"
-              title="Fit screen width"
+              title="Reset Zoom to 80%"
             >
-              Fit
+              80%
             </button>
             <button
               type="button"
