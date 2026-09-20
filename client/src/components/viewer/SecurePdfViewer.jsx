@@ -34,10 +34,20 @@ export default function SecurePdfViewer({ resource }) {
   const canvasRef = useRef(null);
   const blobUrlRef = useRef(null);
 
+  const getAutoFitScale = (unscaledWidth) => {
+    if (!unscaledWidth) return typeof window !== 'undefined' && window.innerWidth < 640 ? 0.6 : 1.2;
+    const screenWidth = containerRef.current?.clientWidth || window.innerWidth || 390;
+    // Mobile (<640px) uses minimal padding (16px total) so PDF fills phone screen width
+    const padding = screenWidth < 640 ? 16 : 48;
+    const availableWidth = Math.max(screenWidth - padding, 260);
+    const fitScale = Number((availableWidth / unscaledWidth).toFixed(2));
+    return screenWidth < 640 ? fitScale : Math.min(fitScale, 1.3);
+  };
+
   const [pdfDoc, setPdfDoc] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const [scale, setScale] = useState(1.2);
+  const [scale, setScale] = useState(() => (typeof window !== 'undefined' && window.innerWidth < 640 ? 0.6 : 1.2));
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [studiedStatus, setStudiedStatus] = useState('Not Started');
@@ -173,6 +183,36 @@ export default function SecurePdfViewer({ resource }) {
     };
   }, [pdfDoc, currentPage, scale, viewerMode]);
 
+  // Automatically calculate responsive fit-to-screen scale when pdfDoc loads or on resize
+  useEffect(() => {
+    if (!pdfDoc) return;
+    let active = true;
+
+    async function autoFitDocument() {
+      try {
+        const page = await pdfDoc.getPage(currentPage || 1);
+        if (!active) return;
+        const unscaledViewport = page.getViewport({ scale: 1.0 });
+        const fitScale = getAutoFitScale(unscaledViewport.width);
+        setScale(fitScale);
+      } catch (err) {
+        console.warn('Failed to calculate fit scale:', err);
+      }
+    }
+
+    autoFitDocument();
+
+    const handleResize = () => {
+      autoFitDocument();
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => {
+      active = false;
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [pdfDoc]);
+
   // Check initial bookmark & study progress
   useEffect(() => {
     if (user && resource?._id) {
@@ -190,9 +230,18 @@ export default function SecurePdfViewer({ resource }) {
     e.preventDefault();
   };
 
-  const handleZoomIn = () => setScale((prev) => Math.min(prev + 0.2, 2.5));
-  const handleZoomOut = () => setScale((prev) => Math.max(prev - 0.2, 0.6));
-  const handleResetZoom = () => setScale(1.2);
+  const handleZoomIn = () => setScale((prev) => Math.min(Number((prev + 0.15).toFixed(2)), 2.5));
+  const handleZoomOut = () => setScale((prev) => Math.max(Number((prev - 0.15).toFixed(2)), 0.35));
+  const handleResetZoom = async () => {
+    if (!pdfDoc) return;
+    try {
+      const page = await pdfDoc.getPage(currentPage);
+      const unscaled = page.getViewport({ scale: 1.0 });
+      setScale(getAutoFitScale(unscaled.width));
+    } catch {
+      setScale(window.innerWidth < 640 ? 0.6 : 1.2);
+    }
+  };
 
   const handlePrevPage = () => setCurrentPage((p) => Math.max(p - 1, 1));
   const handleNextPage = () => setCurrentPage((p) => Math.min(p + 1, totalPages));
@@ -449,7 +498,7 @@ export default function SecurePdfViewer({ resource }) {
       </div>
 
       {/* PDF Viewer Area */}
-      <div className="relative flex-1 overflow-auto bg-slate-900/90 p-4 flex items-center justify-center">
+      <div className="relative flex-1 overflow-auto bg-slate-900/90 p-1.5 sm:p-4 flex items-center justify-center">
         {loading && (
           <div className="flex flex-col items-center gap-3">
             <div className="h-9 w-9 animate-spin rounded-full border-4 border-brand-500 border-t-transparent" />
@@ -476,13 +525,13 @@ export default function SecurePdfViewer({ resource }) {
         {!loading && pdfBlobUrl && (viewerMode === 'embedded' || loadError) && (
           <div className="h-full w-full max-w-5xl flex items-center justify-center">
             <object
-              data={`${pdfBlobUrl}#toolbar=0&navpanes=0&scrollbar=1`}
+              data={`${pdfBlobUrl}#toolbar=0&navpanes=0&scrollbar=1&view=FitH`}
               type="application/pdf"
               className="h-[calc(100vh-8.5rem)] w-full rounded-xl border border-slate-800 shadow-2xl bg-white"
               title={resource?.title}
             >
               <iframe
-                src={`${pdfBlobUrl}#toolbar=0&navpanes=0`}
+                src={`${pdfBlobUrl}#toolbar=0&navpanes=0&view=FitH`}
                 title={resource?.title}
                 className="h-[calc(100vh-8.5rem)] w-full rounded-xl border-0"
               />
@@ -492,47 +541,81 @@ export default function SecurePdfViewer({ resource }) {
 
         {/* Canvas Page View */}
         {!loading && !loadError && viewerMode === 'canvas' && (
-          <canvas
-            ref={canvasRef}
-            className="mx-auto rounded-lg shadow-2xl transition-transform"
-          />
+          <div className="w-full flex items-center justify-center overflow-x-auto py-1">
+            <canvas
+              ref={canvasRef}
+              className="mx-auto rounded-lg shadow-2xl transition-all max-w-full h-auto object-contain"
+            />
+          </div>
         )}
       </div>
 
       {/* Mobile Bottom Navigation Toolbar */}
-      <div className="flex sm:hidden h-11 items-center justify-between border-t border-slate-800 bg-slate-950 px-4 text-xs">
+      <div className="flex sm:hidden h-12 items-center justify-between border-t border-slate-800 bg-slate-950 px-2.5 text-xs z-20">
         {viewerMode === 'canvas' ? (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={handlePrevPage}
               disabled={currentPage <= 1}
               className="rounded p-1 text-slate-400 hover:text-white disabled:opacity-30"
+              aria-label="Previous Page"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
-            <span className="font-mono text-slate-300">
-              {currentPage} / {totalPages}
+            <span className="font-mono text-[11px] text-slate-300">
+              {currentPage}/{totalPages}
             </span>
             <button
               type="button"
               onClick={handleNextPage}
               disabled={currentPage >= totalPages}
               className="rounded p-1 text-slate-400 hover:text-white disabled:opacity-30"
+              aria-label="Next Page"
             >
               <ChevronRight className="h-4 w-4" />
             </button>
           </div>
         ) : (
-          <span className="text-[11px] text-slate-400 font-medium">Continuous View</span>
+          <span className="text-[11px] text-slate-400 font-medium">Continuous</span>
         )}
 
-        <div className="flex items-center gap-2">
+        {/* Mobile Zoom Controls */}
+        {viewerMode === 'canvas' && (
+          <div className="flex items-center gap-0.5 bg-slate-900 rounded-lg border border-slate-800 p-0.5">
+            <button
+              type="button"
+              onClick={handleZoomOut}
+              className="rounded p-1 text-slate-400 hover:text-white"
+              title="Zoom out"
+            >
+              <ZoomOut className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={handleResetZoom}
+              className="px-1.5 text-[10px] font-mono text-brand-400 hover:text-brand-300 font-bold"
+              title="Fit screen width"
+            >
+              Fit
+            </button>
+            <button
+              type="button"
+              onClick={handleZoomIn}
+              className="rounded p-1 text-slate-400 hover:text-white"
+              title="Zoom in"
+            >
+              <ZoomIn className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
+        <div className="flex items-center gap-1.5">
           {pdfBlobUrl && (
             <button
               type="button"
               onClick={() => setViewerMode((m) => (m === 'canvas' ? 'embedded' : 'canvas'))}
-              className="rounded bg-slate-800 px-2 py-0.5 text-[11px] font-semibold text-slate-300"
+              className="rounded bg-slate-800 px-2 py-1 text-[10px] font-semibold text-slate-300"
             >
               {viewerMode === 'canvas' ? 'Scroll' : 'Pages'}
             </button>
@@ -541,12 +624,12 @@ export default function SecurePdfViewer({ resource }) {
           <button
             type="button"
             onClick={handleMarkAsStudied}
-            className={`flex items-center gap-1 rounded-lg px-2 py-0.5 text-[11px] font-semibold ${
-              studiedStatus === 'Studied' ? 'bg-emerald-500/20 text-emerald-400' : 'text-slate-300'
+            className={`flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold ${
+              studiedStatus === 'Studied' ? 'bg-emerald-500/20 text-emerald-400' : 'text-slate-300 bg-slate-800'
             }`}
           >
             <CheckCircle className="h-3.5 w-3.5" />
-            <span>{studiedStatus === 'Studied' ? 'Done' : 'Mark Done'}</span>
+            <span>{studiedStatus === 'Studied' ? 'Done' : 'Mark'}</span>
           </button>
         </div>
       </div>
