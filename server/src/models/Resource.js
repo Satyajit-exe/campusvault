@@ -26,10 +26,14 @@ const resourceSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    cloudUrl: {
+      type: String,
+      default: null,
+    },
     storageProvider: {
       type: String,
-      enum: ['local', 's3', 'r2', 'cloudinary'],
-      default: 'local',
+      enum: ['cloudinary', 'local', 'gridfs', 's3', 'r2'],
+      default: 'cloudinary',
     },
     fileSize: {
       type: Number, // in bytes

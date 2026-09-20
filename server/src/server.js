@@ -25,8 +25,9 @@ import requestRoutes from './routes/requestRoutes.js';
 import contributionRoutes from './routes/contributionRoutes.js';
 import copyrightRoutes from './routes/copyrightRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
+import systemRoutes from './routes/systemRoutes.js';
+import { maintenanceMiddleware } from './middleware/maintenanceMiddleware.js';
 import { autoSeedIfEmpty } from './seeds/autoSeed.js';
-import { storageService } from './services/storage/StorageService.js';
 
 const app = express();
 
@@ -63,6 +64,12 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
+
+// System routes (public status & admin toggle)
+app.use('/api/system', systemRoutes);
+
+// Maintenance Mode middleware (blocks student operations during upgrades)
+app.use(maintenanceMiddleware);
 
 // API Routes
 app.use('/api/auth', authRoutes);
@@ -104,7 +111,6 @@ app.use(errorHandler);
 async function startServer() {
   await connectDB();
   await autoSeedIfEmpty();
-  await storageService.syncLocalUploadsToGridFS();
   app.listen(env.port, () => {
     console.log(`
 ==================================================

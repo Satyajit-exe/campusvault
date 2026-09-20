@@ -208,7 +208,8 @@ router.get('/:id/stream', optionalAuthenticate, async (req, res, next) => {
     // Stream PDF data directly through backend
     const { stream, size, mimeType } = await storageService.getFileStream(
       resource.fileKey,
-      resource.storageProvider
+      resource.storageProvider,
+      resource.cloudUrl
     );
 
     res.set({
@@ -238,7 +239,8 @@ router.get('/:id/admin-download', authenticate, requireAdmin, async (req, res, n
 
     const { stream, size } = await storageService.getFileStream(
       resource.fileKey,
-      resource.storageProvider
+      resource.storageProvider,
+      resource.cloudUrl
     );
 
     res.set({

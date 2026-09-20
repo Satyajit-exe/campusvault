@@ -1,14 +1,17 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
 import Navbar from './components/common/Navbar';
 import Footer from './components/common/Footer';
 import ProtectedRoute from './components/common/ProtectedRoute';
+import { useAuth } from './context/AuthContext';
+import { api } from './services/api';
 
 // Pages
 import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import MaintenancePage from './pages/MaintenancePage';
 import StudentDashboard from './pages/StudentDashboard';
 import GlobalSearchPage from './pages/GlobalSearchPage';
 import SubjectPage from './pages/SubjectPage';
@@ -33,11 +36,62 @@ import AdminUsers from './pages/admin/AdminUsers';
 
 export default function App() {
   const location = useLocation();
+  const { user, isAdmin, loading: authLoading } = useAuth();
+  const [maintenance, setMaintenance] = useState(false);
+  const [bypassed, setBypassed] = useState(false);
+
+  useEffect(() => {
+    async function checkSystem() {
+      try {
+        const res = await api.getSystemStatus();
+        if (res && res.maintenance) {
+          setMaintenance(true);
+        } else {
+          setMaintenance(false);
+        }
+      } catch (err) {
+        // Backend offline or restarting
+      }
+    }
+    checkSystem();
+  }, []);
+
+  const handleToggleMaintenance = async () => {
+    try {
+      const res = await api.setMaintenanceMode({ enabled: !maintenance });
+      setMaintenance(Boolean(res?.maintenance?.enabled));
+    } catch (err) {
+      alert(err.message || 'Failed to update maintenance mode');
+    }
+  };
+
   const isAdminRoute = location.pathname.startsWith('/admin');
   const isViewerRoute = location.pathname.includes('/view') || location.pathname.startsWith('/viewer');
+  const isAuthRoute = location.pathname === '/login' || location.pathname === '/forgot-password';
+
+  // If maintenance mode is active and current user is NOT an admin (and hasn't bypassed via login):
+  if (maintenance && !isAdmin && !bypassed && !isAuthRoute) {
+    return <MaintenancePage onBypass={() => setBypassed(true)} />;
+  }
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 selection:bg-brand-500 selection:text-white transition-colors duration-200">
+      {/* Admin Maintenance Alert Banner */}
+      {maintenance && isAdmin && (
+        <div className="bg-amber-500/20 border-b border-amber-500/30 text-amber-300 px-4 py-2 text-xs font-semibold flex items-center justify-between z-50">
+          <div className="flex items-center gap-2">
+            <span className="animate-pulse">⚠️</span>
+            <span>Maintenance Mode is ACTIVE. Non-admin students currently see the maintenance screen.</span>
+          </div>
+          <button
+            onClick={handleToggleMaintenance}
+            className="px-3 py-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs transition-colors cursor-pointer"
+          >
+            Turn Off Maintenance Mode
+          </button>
+        </div>
+      )}
+
       {/* Hide regular Navbar on Admin routes or when full immersion in Viewer is active */}
       {!isAdminRoute && !isViewerRoute && <Navbar />}
 

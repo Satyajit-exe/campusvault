@@ -123,4 +123,8 @@ export const api = {
   updateUserRole: (id, data) => request(`/admin/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   createSubject: (data) => request('/admin/subjects', { method: 'POST', body: JSON.stringify(data) }),
   deleteSubject: (id) => request(`/admin/subjects/${id}`, { method: 'DELETE' }),
+
+  // System & Maintenance
+  getSystemStatus: () => request('/system/status'),
+  setMaintenanceMode: (data) => request('/system/maintenance', { method: 'POST', body: JSON.stringify(data) }),
 };

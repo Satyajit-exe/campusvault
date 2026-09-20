@@ -12,19 +12,26 @@ import {
   ShieldCheck,
   ArrowRight,
   Plus,
+  Wrench,
 } from 'lucide-react';
 import { api } from '../../services/api';
 
 export default function AdminDashboard() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [maintenance, setMaintenance] = useState(false);
+  const [updatingMaintenance, setUpdatingMaintenance] = useState(false);
 
   useEffect(() => {
     async function loadDashboard() {
       try {
         setLoading(true);
-        const res = await api.getAdminDashboard();
-        if (res.data) setStats(res.data);
+        const [dashRes, sysRes] = await Promise.all([
+          api.getAdminDashboard(),
+          api.getSystemStatus().catch(() => null),
+        ]);
+        if (dashRes?.data) setStats(dashRes.data);
+        if (sysRes) setMaintenance(Boolean(sysRes.maintenance));
       } catch (err) {
         console.error('Failed to load admin dashboard:', err);
       } finally {
@@ -33,6 +40,18 @@ export default function AdminDashboard() {
     }
     loadDashboard();
   }, []);
+
+  const handleToggleMaintenance = async () => {
+    setUpdatingMaintenance(true);
+    try {
+      const res = await api.setMaintenanceMode({ enabled: !maintenance });
+      setMaintenance(Boolean(res?.maintenance?.enabled));
+    } catch (err) {
+      alert(err.message || 'Failed to toggle maintenance mode');
+    } finally {
+      setUpdatingMaintenance(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -104,6 +123,62 @@ export default function AdminDashboard() {
             <span>Review Submissions ({stats?.pendingContributions || 0})</span>
           </Link>
         </div>
+      </div>
+
+      {/* Maintenance Mode Controller Card */}
+      <div
+        className={`p-5 rounded-2xl border transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 ${
+          maintenance
+            ? 'bg-amber-500/10 border-amber-500/30 text-amber-200'
+            : 'bg-white border-slate-200 dark:bg-slate-900 dark:border-slate-800 text-slate-700 dark:text-slate-300'
+        }`}
+      >
+        <div className="flex items-center gap-3.5">
+          <div
+            className={`p-3 rounded-xl flex items-center justify-center ${
+              maintenance
+                ? 'bg-amber-500/20 text-amber-400'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+            }`}
+          >
+            <Wrench className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Platform Maintenance Mode</h3>
+              <span
+                className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide ${
+                  maintenance
+                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                    : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                }`}
+              >
+                {maintenance ? 'ACTIVE (Users Blocked)' : 'OFF (Normal Access)'}
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              {maintenance
+                ? 'All non-admin users currently see the scheduled maintenance upgrade screen while you upload or configure files.'
+                : 'Enable maintenance mode during uploads or updates so users see a friendly upgrade notice.'}
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={handleToggleMaintenance}
+          disabled={updatingMaintenance}
+          className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer disabled:opacity-50 shrink-0 ${
+            maintenance
+              ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20'
+              : 'bg-amber-600 hover:bg-amber-500 text-white shadow-amber-600/20'
+          }`}
+        >
+          {updatingMaintenance
+            ? 'Updating...'
+            : maintenance
+            ? 'Disable Maintenance Mode'
+            : 'Enable Maintenance Mode'}
+        </button>
       </div>
 
       {/* Metrics Cards Grid */}
